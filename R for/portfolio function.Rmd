@@ -1,0 +1,72 @@
+---
+title: "portfolio_fun"
+author: "Ray"
+date: "2023-09-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(CVXR)
+```
+
+## GMVP
+
+```{r cars}
+GMVP_portfolio_fun <- function(dataset, ...) {
+  X <- diff(log(dataset$adjusted))[-1]  # compute log returns
+  Sigma <- cov(X)  # compute SCM
+  # design GMVP
+  w <- solve(Sigma, rep(1, nrow(Sigma)))
+  w <- abs(w)/sum(abs(w))
+  return(w)
+}
+```
+
+## Markowitz mean-variance portfolio
+
+```{r }
+Markowitz_portfolio_fun <- function(data, ...) {
+  X <- as.matrix(diff(log(data$adjusted))[-1])  # compute log returns
+  mu <- colMeans(X)  # compute mean vector
+  Sigma <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  w <- Variable(nrow(Sigma))
+  prob <- Problem(Maximize(t(mu) %*% w - 0.5*quad_form(w, Sigma)),
+                  constraints = list(w >= 0, sum(w) == 1))
+  result <- solve(prob)
+  return(as.vector(result$getValue(w)))
+}
+```
+
+
+## VAR
+```{r}
+VaR<-function(dataset,...){
+  
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu <- colMeans(X)  # compute mean vector
+  Sigma <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w <- rep(1/N,N)
+  
+  n<-2000
+  VaR_list<-c()
+  for (i in 1:n){
+    w<-c(runif(N,0,1))
+    w<-w/sum(w)
+    VaR<-quantile(diff(log(dataset$adjusted%*%w))[-1],0.01)
+    
+    VaR_list<-append(VaR_list,VaR)
+    
+    if (VaR == min(VaR_list))
+    {
+      w_max=w
+    }
+  }
+  
+ return(w_max)
+
+}
+```
+

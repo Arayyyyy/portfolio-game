@@ -1,0 +1,730 @@
+---
+title: 'class R #1'
+output: html_document
+date: "2023-09-19"
+---
+
+## import basic packages
+
+```{r }
+
+library(xts)
+library(quantmod)
+library(PerformanceAnalytics)
+```
+
+## Download data
+
+```{r }
+stock_namelist <- c("AAPL", "AMD", "ADI",  "ABBV", "AEZS", "A",  "APD", "AA","CF")
+prices <- xts()
+for (i in 1:length(stock_namelist)) {
+  tmp <- Ad(getSymbols(stock_namelist[i], from = "2013-01-01", to = "2016-12-31", auto.assign = FALSE))
+  tmp <- na.approx(tmp, na.rm = FALSE)  # interpolate NAs
+  prices <- cbind(prices, tmp)
+}
+colnames(prices) <- stock_namelist
+tclass(prices) <- "Date"  # 以日期作为index
+```
+
+## Price analysy
+
+You can also embed plots, for example:
+
+```{r }
+
+str(prices)
+
+head(prices)
+
+tail(prices)
+```
+
+## Get return
+
+```{r}
+x_log <- diff(log(prices))[-1] #获取回报率
+
+x_lin <- (prices/lag(prices)-1)#line retuen
+
+N <- ncol(x_log)
+
+T <- nrow(x_log)
+```
+
+## Plot return
+
+```{r}
+plot(log(prices), col = rainbow10equal,legend.loc = "topleft")
+
+plot(prices/rep(prices[1,],each = nrow(prices)),col = rainbow10equal,legend.loc = "topleft", main = "prices")
+```
+
+## Caculate mean and variance
+
+```{r}
+T_trn <-round(0.7*T)
+
+x_log_trn <- x_log[1:T_trn, ]
+x_log_tst <- x_log[(T_trn+1):T, ]
+x_lin_trn <- x_lin[1:T_trn, ]
+x_lin_tst <- x_lin[(T_trn+1):T, ]
+
+
+```
+
+```{r}
+#均值
+mu <- colMeans(x_log_trn)
+#方差
+sigma <- cov(x_log_trn)
+
+w_BnH <- diag(N) #buy & hold's weight
+rownames(w_BnH)<-colnames(x_log)
+colnames(w_BnH)<-paste0("B&H-",rownames(w_BnH))
+
+mu 
+sigma
+w_BnH
+```
+
+## Obtain data
+
+```{r}
+library(portfolioBacktest)
+
+data("dataset10")
+
+class(dataset10)
+```
+
+## define Markowitz mean-variance portfolio
+
+```{r}
+library(CVXR)
+
+Markowitz_portfolio_fun <- function(data, ...) {
+  X <- as.matrix(diff(log(data$adjusted))[-1])  # compute log returns
+  mu <- colMeans(X)  # compute mean vector
+  Sigma <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  w <- Variable(nrow(Sigma))
+  prob <- Problem(Maximize(t(mu) %*% w - 0.5*quad_form(w, Sigma)),
+                  constraints = list(w >= 0, sum(w) == 1))
+  result <- solve(prob)
+  return(as.vector(result$getValue(w)))
+}
+```
+
+```{r}
+
+Markowitz_portfolio_fun_0.25 <- function(data, ...) {
+  X <- as.matrix(diff(log(data$adjusted))[-1])  # compute log returns
+  mu <- colMeans(X)  # compute mean vector
+  Sigma <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  w <- Variable(nrow(Sigma))
+  prob <- Problem(Maximize(t(mu) %*% w - 0.25*quad_form(w, Sigma)),
+                  constraints = list(w >= 0, sum(w) == 1))
+  result <- solve(prob)
+  return(as.vector(result$getValue(w)))
+}
+```
+
+## define GMVP
+
+```{r}
+GMVP_portfolio_fun <- function(dataset, ...) {
+  X <- diff(log(dataset$adjusted))[-1]  # compute log returns
+  Sigma <- cov(X)  # compute SCM
+  # design GMVP
+  w <- solve(Sigma, rep(1, nrow(Sigma)))
+  w <- abs(w)/sum(abs(w))
+  return(w)
+}
+```
+
+## define my own function
+
+miniize the VaR of the portfolio
+
+```{r}
+VaR<-function(dataset,...){
+  
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu <- colMeans(X)  # compute mean vector
+  Sigma <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w <- rep(1/N,N)
+  
+  n<-2000
+  VaR_list<-c()
+  for (i in 1:n){
+    w<-c(runif(N,0,1))
+    w<-w/sum(w)
+    VaR<-quantile(diff(log(dataset$adjusted%*%w))[-1],0.01)
+    
+    VaR_list<-append(VaR_list,VaR)
+    
+    if (VaR == min(VaR_list))
+    {
+      w_max=w
+    }
+  }
+  
+ return(w_max)
+
+}
+```
+
+```{r}
+
+simple<-function(dataset,...){
+  
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu <- colMeans(X)  # compute mean vector
+  Sigma <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w<-c()
+  for(i in 1:N){
+    if(mu[i]>0)
+    {
+      w[i]=mu[i]
+    }else
+    if(mu[i]<0)
+    {
+      w[i]=0
+    }
+  }
+  w<-w/sum(w)
+  return(w)
+}
+
+```
+
+```{r}
+simple_pro<-function(dataset,...)
+{
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu <- colMeans(X)  # compute mean vector
+  Sigma <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w<-c()
+  for(i in 1:N){
+      w[i]=mu[i]/Sigma[i,i]
+    }
+  
+
+  w<-w/sum(abs(w))
+  return(w)
+}
+```
+
+```{r}
+min_max<-function(dataset,...){
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu <- colMeans(X)  # compute mean vector
+  Sigma <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w<-c()
+  Max = max(mu)
+  Min = min(mu)
+  
+  for(i in 1:N){
+      w[i]=(mu[i]-Min)/(Max-Min)
+  }
+  w<-w/sum(w)
+  return(w)
+}
+```
+
+```{r}
+min_max_pro<-function(dataset,...){
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu <- colMeans(X)  # compute mean vector
+  Sigma <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w<-c()
+  Max = max(mu)
+  Min = min(mu)
+  
+}
+```
+
+```{r}
+VaR_return<-function(dataset,...){
+  
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu <- colMeans(X)  # compute mean vector
+  Sigma <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w<-c()
+  Max = max(mu)
+  Min = min(mu)
+  
+  
+}
+```
+
+```{r}
+MDCP <- function(dataset,...) {
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])
+  Sigma<-cov(X)
+  N<-nrow(Sigma)
+  C <- diag(1/sqrt(diag(Sigma))) %*% Sigma %*% diag(1/sqrt(diag(Sigma)))
+  colnames(C) <- colnames(Sigma)
+  n<-5000
+  pro_list<-c()
+  for (i in 1:n){
+    w<-c(runif(N,0,1))
+    w<-w/sum(w)
+    pro<-t(w)%*%C%*%w
+    
+    pro_list <-append(pro_list,pro)
+    if (pro == min(pro_list))
+    {
+      w_max=w
+    }
+  }
+  return(w_max)
+}
+```
+
+```{r}
+MDP <-function(dataset,...){
+  
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu <- colMeans(X)  # compute mean vector
+  Sigma <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w <- Variable(nrow(Sigma))
+  Max = max(mu)
+  Min = min(mu)
+  
+  prob <- Problem(Minimize(quad_form(w, Sigma)),
+                  constraints = list( t( sqrt(diag(Sigma))) %*% w == 1))
+  result <- CVXR::solve(prob)
+  w <- as.vector(result$getValue(w)/sum(abs(result$getValue(w))))
+  return(w)
+  
+}
+```
+
+```{r}
+rho_LW <- function(X, Sigma_scm, Sigma_T) {
+  X <- scale(X, center = TRUE, scale = FALSE)
+  T <- nrow(X)
+  # tmp <- 0
+  # for (t in 1:T)
+  #  tmp <- tmp + norm(Sigma_scm - X[t, ] %o% X[t, ], "F")^2
+  tmp <- (2-T)*norm(Sigma_scm, "F")^2 + sum(apply(X, 1, norm, "2")^4)
+  rho <- min(1, (1/T^2) * tmp / norm(Sigma_scm - Sigma_T, "F")^2)
+  return(rho)
+}
+```
+
+```{r}
+rho_maxSR <- function(mu_sm, Sigma_scm, Sigma_T, T) {
+  W <- diag(T) - (1/T)*matrix(1, T, T)
+  rho1_sweep <- exp(seq(-10, 10, length.out = 100))
+  obj <- NULL
+  for (rho1 in rho1_sweep) {
+    Sigma_sh <- rho1*Sigma_T + Sigma_scm
+    D <- (1/T)* sum(diag(Sigma_scm %*% solve(Sigma_sh)))
+    delta <- D/(1-D)
+    b <- T/sum(diag(W %*% solve((diag(T)+delta*W) %*% (diag(T)+delta*W))))
+    inv_S_sh_mu <- solve(Sigma_sh, mu_sm)
+    num <- mu_sm %*% inv_S_sh_mu - delta
+    den <- sqrt(b * inv_S_sh_mu %*% Sigma_scm %*% inv_S_sh_mu)
+    obj <- c(obj, num/den)
+  }
+  #plot(obj)
+  i_max <- which.max(obj)
+  rho1 <- rho1_sweep[i_max]
+  return(rho1/(1 + rho1))
+}
+```
+
+## caclulate JS-estimator
+
+```{r}
+JS<-function(mu_sm,Sigma_scm){
+  # define the four targets
+t_1 <- rep(0, N)
+t_2 <- rep(0.1, N)
+t_3 <- rep(mean(mu_sm), N)
+t_4 <- rep(sum(solve(Sigma_scm, mu_sm))/sum(solve(Sigma_scm, rep(1, N))), N)
+
+# compute the corresponding four rho's
+lambdas  <- eigen(Sigma)$values
+lmd_mean <- mean(lambdas)
+lmd_max  <- max(lambdas)
+rho_1 <- (1/T)*(N*lmd_mean - 2*lmd_max)/norm(mu_sm - t_1, "2")^2
+rho_2 <- (1/T)*(N*lmd_mean - 2*lmd_max)/norm(mu_sm - t_2, "2")^2
+rho_3 <- (1/T)*(N*lmd_mean - 2*lmd_max)/norm(mu_sm - t_3, "2")^2
+rho_4 <- (1/T)*(N*lmd_mean - 2*lmd_max)/norm(mu_sm - t_4, "2")^2
+
+# finally the James-Stein estimators
+mu_JS_1 <- (1-rho_1)*mu_sm + rho_1*t_1
+mu_JS_2 <- (1-rho_2)*mu_sm + rho_2*t_2
+mu_JS_3 <- (1-rho_3)*mu_sm + rho_3*t_3
+mu_JS_4 <- (1-rho_4)*mu_sm + rho_4*t_4
+
+return(list(mu_JS_1,mu_JS_2,mu_JS_3,mu_JS_4))
+}
+```
+
+## cacualte LW estimator
+```{r}
+LW<-function(X,...){
+  mu_sm<-colMeans(X)
+  Sigma_scm<-cov(X)
+  
+  T_I <- sum(diag(Sigma_scm))/N * diag(N)
+  T_D <- diag(diag(Sigma_scm))
+  
+  rho <- rho_LW(X, Sigma_scm, T_I)
+  Sigma_LW_I <- (1-rho)*Sigma_scm + rho*T_I
+  rho <- rho_LW(X, Sigma_scm, T_D)
+  Sigma_LW_D <- (1-rho)*Sigma_scm + rho*T_D
+  
+  result<-list(Sigma_LW_I,Sigma_LW_D)
+  return(result)
+}
+```
+
+## caculate MAX_sp estimator
+```{r}
+Max_sp<-function(X,...){
+  
+  mu_sm<-colMeans(X)
+  Sigma_scm<-cov(X)
+   
+  T<-nrow(X)
+  T_I <- sum(diag(Sigma_scm))/N * diag(N)
+  T_D <- diag(diag(Sigma_scm))
+  
+  rho <- rho_maxSR(mu_sm, Sigma_scm, T_I, T)
+  Sigma_maxSR_I <- (1-rho)*Sigma_scm + rho*T_I
+  rho <- rho_maxSR(mu_sm, Sigma_scm, T_D, T)
+  Sigma_maxSR_D <- (1-rho)*Sigma_scm + rho*T_D
+  
+  result<-list(Sigma_maxSR_I,Sigma_maxSR_D)
+  
+  return(result)
+}
+```
+
+
+```{r}
+GMVP_LW_I <-function(dataset,...){
+  
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu <- colMeans(X)  # compute mean vector
+  Sigma <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w <- Variable(nrow(Sigma))
+  T <-nrow(X)
+  Sigma_LW<-LW(X)[[1]]
+  
+
+  w <- solve(Sigma_LW, rep(1, nrow(Sigma_LW)))
+  w <- (1.5*w)/sum(abs(w))
+  return(w)
+  
+
+  
+}
+```
+
+```{r}
+GMVP_LW_D <-function(dataset,...){
+  
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu <- colMeans(X)  # compute mean vector
+  Sigma <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w <- Variable(nrow(Sigma))
+  T <-nrow(X)
+  Sigma_LW<-LW(X)[[2]]
+  
+
+  w <- solve(Sigma_LW, rep(1, nrow(Sigma_LW)))
+  w <- (1.5*w)/sum(abs(w))
+  return(w)
+  
+
+  
+}
+```
+## Max sharpratio function
+```{r}
+GMVP_max_sp_I <-function(dataset,...){
+  
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu <- colMeans(X)  # compute mean vector
+  Sigma <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w <- Variable(nrow(Sigma))
+  T <-nrow(X)
+  Sigma_max_sp<-Max_sp(X)[[1]]
+  
+
+  w <- solve(Sigma_LW, rep(1, nrow(Sigma_max_sp)))
+  w <- (1.5*w)/sum(abs(w))
+  return(w)
+  
+
+  
+}
+```
+
+```{r}
+GMVP_max_sp_D <-function(dataset,...){
+  
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu <- colMeans(X)  # compute mean vector
+  Sigma <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w <- Variable(nrow(Sigma))
+  T <-nrow(X)
+  Sigma_max_sp<-Max_sp(X)[[2]]
+  
+
+  w <- solve(Sigma_LW, rep(1, nrow(Sigma_max_sp)))
+  w <- (1.5*w)/sum(abs(w))
+  return(w)
+  
+
+  
+}
+```
+
+```{r}
+maxSR_scm<-function(dataset,...){
+  
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu_sm <- colMeans(X)  # compute mean vector
+  Sigma_scm <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w <- Variable(nrow(Sigma))
+  T <-nrow(X)
+  
+  
+  prob <- Problem(Minimize(quad_form(w, Sigma_scm)),
+                  constraints = list( t(mu_sm) %*% w == 1))
+  result <- solve(prob)
+  return(1.5*as.vector(result$getValue(w)/sum(abs(result$getValue(w)))))
+  
+}
+
+maxSR_LW_I<-function(dataset,...){
+  
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu_sm <- colMeans(X)  # compute mean vector
+  Sigma_scm <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w <- Variable(nrow(Sigma))
+  T <-nrow(X)
+  
+  Sigma_LW_I = LW(X)[[1]]
+  Sigma_LW_D = LW(X)[[2]]
+  
+  prob <- Problem(Minimize(quad_form(w, Sigma__LW_I)),
+                  constraints = list( t(mu_sm) %*% w == 1))
+  result <- solve(prob)
+  return(1.5*as.vector(result$getValue(w)/sum(abs(result$getValue(w)))))
+  
+}
+
+maxSR_LW_D<-function(dataset,...){
+  
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu_sm <- colMeans(X)  # compute mean vector
+  Sigma_scm <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w <- Variable(nrow(Sigma))
+  T <-nrow(X)
+  
+  Sigma_LW_I = LW(X)[[1]]
+  Sigma_LW_D = LW(X)[[2]]
+  
+  prob <- Problem(Minimize(quad_form(w, Sigma__LW_D)),
+                  constraints = list( t(mu_sm) %*% w == 1))
+  result <- solve(prob)
+  return(1.5*as.vector(result$getValue(w)/sum(abs(result$getValue(w)))))
+  
+}
+
+maxSR_maxSR<-function(dataset,...){
+  
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu_sm <- colMeans(X)  # compute mean vector
+  Sigma_scm <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w <- Variable(nrow(Sigma))
+  T <-nrow(X)
+  
+  Sigma_LW_I = LW(X)[[1]]
+  Sigma_LW_D = LW(X)[[2]]
+  
+  Sigam_MaxSR = Max_sp(X)[[1]]
+  prob <- Problem(Minimize(quad_form(w, Sigam_MaxSR)),
+                  constraints = list( t(mu_sm) %*% w == 1))
+  result <- solve(prob)
+  return(1.5*as.vector(result$getValue(w)/sum(abs(result$getValue(w)))))
+  
+}
+
+maxSR_JS_scm<-function(dataset,...){
+  
+  X <- as.matrix(diff(log(dataset$adjusted))[-1])  # compute log returns
+  mu_sm <- colMeans(X)  # compute mean vector
+  Sigma_scm <- cov(X)  # compute the SCM
+  # design mean-variance portfolio
+  N<-nrow(Sigma)
+  w <- Variable(nrow(Sigma))
+  T <-nrow(X)
+  
+  Sigma_LW_I = LW(X)[[1]]
+  Sigma_LW_D = LW(X)[[2]]
+  
+  u_JS = JS(mu_sm,Sigma_scm,)
+  Sigam_MaxSR = Max_sp(X)[[1]]
+  prob <- Problem(Minimize(quad_form(w, Sigam_MaxSR)),
+                  constraints = list( t(mu_sm) %*% w == 1))
+  result <- solve(prob)
+  return(1.5*as.vector(result$getValue(w)/sum(abs(result$getValue(w)))))
+  
+}
+```
+
+```{r}
+#get s&p500
+
+data(SP500_symbols)  # load the SP500 symbols
+# download data from internet
+SP500 <- stockDataDownload(stock_symbols = SP500_symbols, 
+                           from = "2000-01-01", to = "2020-12-31")
+# resample 10 times from SP500, each with 50 stocks and 2-year consecutive data 
+my_dataset_list <- financialDataResample(SP500, 
+                                         N_sample = 50, T_sample = 252*2, 
+                                         num_datasets = 20)
+
+
+
+
+```
+
+```{r}
+library(xts)
+library(quantmod)
+library(PerformanceAnalytics)
+
+prices = my_dataset_list$`dataset 1`$adjusted
+plot(prices/rep(prices[1,],each = nrow(prices)),col = rainbow10equal,legend.loc = "topleft", main = "prices")
+```
+
+```{r}
+library(portfolioBacktest)
+source("portfolio fun.R")
+portfolios <- list("GMVP"      = GMVP_portfolio_fun,
+                   #"Markowitz" = Markowitz_portfolio_fun,
+                   #"VaR" = VaR,
+                   "simple" =simple,
+                   "simple_pro" = simple_pro,
+                   #"Min_max" = min_max,
+                   "MDCP" = MDCP,
+                   "MDP" = MDP,
+                   "GMVP_LW_I" = GMVP_LW_I,
+                   "GMVP_LW_D" = GMVP_LW_D,
+                   "GMVP_sp_I" = GMVP_max_sp_I,
+                   "GMVP_sp_D" = GMVP_max_sp_D
+                   )
+
+bt<-portfolioBacktest(portfolios,my_dataset_list,benchmarks = c("1/N","index"),
+                      shortselling = TRUE,
+                      leverage = 1.5,
+                      lookback = 62,
+                      optimize_every = 10,
+                      rebalance_every = 1)
+```
+
+```{r}
+library(CVXR)
+res_sum <- backtestSummary(bt)
+
+res_sum$performance_summary
+
+res <- backtestSelector(bt, portfolio_index = 1)
+
+backtestChartCumReturn(bt, c("GMVP","GMVP_LW_I","GMVP_LW_D","GMVP_sp_I","GMVP_sp_D","1/N","MDCP","simple_pro","MDP"))
+
+summaryTable(res_sum, type = "DT", order_col = "Sharpe ratio", order_dir = "desc")
+
+
+```
+
+```{r}
+leaderboard <- backtestLeaderboard(bt, 
+                                   weights = list("Sharpe ratio"  = 1, 
+                                                  "max drawdown"  = 1, 
+                                                  "annual return" = 1,
+                                                  "failure rate" = 7
+                                                  ))
+
+library(gridExtra)
+
+grid.table(leaderboard$leaderboard_scores)
+
+
+leaderboard$leaderboard_scores
+```
+
+```{r}
+library(portfolioBacktest)
+source("portfolio function.Rmd")
+portfolios <- list(
+                    "portfolio_fun" = GMVP
+                   )
+
+bt<-portfolioBacktest(portfolios,my_dataset_list,benchmarks = c("1/N","index"),
+                      shortselling = TRUE,
+                      leverage = 1,
+                      lookback = 252,
+                      optimize_every = 20,
+                      rebalance_every = 1)
+
+res_sum <- backtestSummary(bt)
+
+res_sum$performance_summary
+
+
+backtestChartCumReturn(bt, c("1/N", "portfolio_fun", "index"))
+
+summaryTable(res_sum, type = "DT", order_col = "Sharpe ratio", order_dir = "desc")
+
+```
+
+```{r}
+res <- backtestSelector(bt, portfolio_index = 1)
+
+error1 <- res$error_message[[1]]
+str(error1)
+
+```

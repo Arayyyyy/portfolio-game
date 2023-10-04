@@ -1,0 +1,109 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+## GET data
+
+```{r}
+#get s&p500
+
+data(SP500_symbols)  # load the SP500 symbols
+# download data from internet
+SP500 <- stockDataDownload(stock_symbols = SP500_symbols, 
+                           from = "2000-01-01", to = "2020-12-31")
+# resample 10 times from SP500, each with 50 stocks and 2-year consecutive data 
+my_dataset_list <- financialDataResample(SP500, 
+                                         N_sample = 50, T_sample = 252*2, 
+                                         num_datasets = 20)
+```
+
+## Backtest
+
+```{r}
+library(portfolioBacktest)
+source("portfolio fun.R")
+portfolios <- list("GMVP"      = GMVP_portfolio_fun,
+                   #"Markowitz" = Markowitz_portfolio_fun,
+                   #"VaR" = VaR,
+                   "simple" =simple,
+                   "simple_pro" = simple_pro,
+                   #"Min_max" = min_max,
+                   "MDCP" = MDCP,
+                   "MDP" = MDP
+                   )
+
+bt<-portfolioBacktest(portfolios,my_dataset_list,benchmarks = c("1/N","index"),
+                      shortselling = TRUE,
+                      leverage = 1.5,
+                      lookback = 62,
+                      optimize_every = 10,
+                      rebalance_every = 1)
+```
+
+
+## Summary 
+
+```{r}
+library(DT)
+res_sum <- backtestSummary(bt)
+
+res_sum$performance_summary
+
+res <- backtestSelector(bt, portfolio_index = 1)
+
+backtestChartCumReturn(bt, c("1/N","GMVP", "index","simple_pro","simple","MDCP","MDP"))
+
+summaryTable(res_sum, type = "DT", order_col = "Sharpe ratio", order_dir = "desc")
+
+
+```
+
+
+## Score
+
+```{r}
+leaderboard <- backtestLeaderboard(bt, 
+                                   weights = list("Sharpe ratio"  = 1, 
+                                                  "max drawdown"  = 1, 
+                                                  "annual return" = 1,
+                                                  "failure rate" = 7
+                                                  ))
+
+library(gridExtra)
+
+grid.table(leaderboard$leaderboard_scores)
+
+
+leaderboard$leaderboard_scores
+```
+
+## Test new function
+
+```{r}
+library(portfolioBacktest)
+source("portfolio fun.R")
+portfolios <- list(
+                    "portfolio_fun" = MDCP
+                   )
+
+bt<-portfolioBacktest(portfolios,my_dataset_list,benchmarks = c("1/N","index"),
+                      shortselling = TRUE,
+                      leverage = 1,
+                      lookback = 62,
+                      optimize_every = 20,
+                      rebalance_every = 1)
+```
+
+```{r}
+library(DT)
+res_sum <- backtestSummary(bt)
+
+res_sum$performance_summary
+
+
+backtestChartCumReturn(bt, c("1/N", "portfolio_fun", "index"))
+
+summaryTable(res_sum, type = "DT", order_col = "Sharpe ratio", order_dir = "desc")
+
+```
